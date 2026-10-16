@@ -1,0 +1,994 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ORR Management Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+
+<!--
+=====================================================================================
+ SETUP (one time, about 10 minutes, free)
+
+ This file works as soon as you open it, but until you paste your Firebase settings
+ below it only saves in your own browser ("demo mode"). To share live data with
+ everyone who opens the page:
+
+ 1. Go to https://console.firebase.google.com and click "Add project". Any name
+    (for example orr-map). You can turn Google Analytics off.
+ 2. In the project, open Build > Firestore Database > Create database. Pick a
+    location near you and start in production mode.
+ 3. Open Build > Authentication > Get started > Sign-in method > Anonymous > Enable.
+ 4. In Firestore, open the Rules tab, replace everything with the rules below, and
+    click Publish:
+
+        rules_version = '2';
+        service cloud.firestore {
+          match /databases/{database}/documents {
+            match /{collection}/{doc} {
+              allow read, write: if request.auth != null;
+            }
+          }
+        }
+
+ 5. Open Project settings (gear icon) > General > Your apps > the </> Web icon.
+    Register the app (skip Hosting). Copy the firebaseConfig values it shows you
+    into ORR_FIREBASE_CONFIG just below.
+ 6. Upload this one file to any web host (GitHub Pages, Netlify Drop, your own site)
+    and share the address. Anyone with the link can view and edit.
+
+ Note: these rules let anyone who has the link make changes. That matches
+ "anyone with the link can edit". Use Export in the Map section for backups.
+=====================================================================================
+-->
+<script>
+window.ORR_FIREBASE_CONFIG = {
+  apiKey: "AIzaSyBMV8eAEZYXQgi_a9golYdTU6qECzD_5dE",
+  authDomain: "wetland-management.firebaseapp.com",
+  projectId: "wetland-management",
+  storageBucket: "wetland-management.firebasestorage.app",
+  messagingSenderId: "807477584635",
+  appId: "1:807477584635:web:692be12cfa7915e3dac65e"
+};
+// Starting map position (near Taberville, Missouri). Use "Set home view" in the app to change it for everyone.
+window.ORR_START = { lat: 38.0, lng: -93.97, zoom: 14 };
+</script>
+
+<style>
+/* Layout: satellite map on the left, year summary and entries on the right; stacks on phones. */
+:root{
+  /* Palette matched to the Rodrock Homes logo: white, deep blue-charcoal #141c24, green #5ca41c */
+  --bg:#f1f3f4; --surface:#fcfcfc; --ink:#141c24; --muted:#56616b; --line:#d5dbdf;
+  --accent:#4a8a12; --accent-ink:#ffffff; --lime:#5ca41c; --band:#141c24; --danger:#b3382c; --halo:rgba(12,18,24,.8);
+  --f-display:"Roboto Condensed","Arial Narrow",sans-serif;
+  --f-body:"Inter",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme: dark){:root{
+  --bg:#0d1218; --surface:#141c24; --ink:#eef2f4; --muted:#98a4ad; --line:#26313b;
+  --accent:#5ca41c; --accent-ink:#0b1118; --band:#080c10; --danger:#ef7b6e; color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--f-body);font-size:14px;line-height:1.45;
+  padding-inline:max(16px,env(safe-area-inset-left,0px)) max(16px,env(safe-area-inset-right,0px));padding-block:16px 28px}
+button,input,select,textarea{font:inherit;color:inherit}
+.wrap{max-width:1500px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
+header.top{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:14px 24px;background:var(--band);color:#fff;border-radius:6px;padding:20px 22px;border:1px solid var(--line)}
+.kicker{font-family:var(--f-display);font-weight:600;font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--lime);margin-bottom:8px}
+h1{font-family:var(--f-display);font-weight:700;font-size:clamp(28px,4.5vw,40px);line-height:1;margin:0;text-wrap:balance}
+h1 em{font-style:normal;color:var(--lime)}
+.sub{color:#b4bec6;font-size:13px;margin-top:10px;max-width:56ch}
+header .yr{background:transparent;border-color:#38444e;color:#e8edf0}
+header .yr[aria-pressed="true"]{background:var(--lime);color:#0b1118;border-color:var(--lime)}
+header .yr.add{color:#97a3ac}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tabs .btn{padding:9px 20px;font-family:var(--f-display);font-size:16px;letter-spacing:.07em;text-transform:uppercase;font-weight:600}
+.page{max-width:980px;width:100%;display:grid;gap:12px}
+.pagehead{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.pagehead h2{font-family:var(--f-display);font-size:26px;text-transform:uppercase;letter-spacing:.04em;margin:0}
+.pagehead h2 small{font-family:var(--f-mono);font-size:13px;color:var(--muted);letter-spacing:0;text-transform:none;font-weight:400;margin-left:8px}
+.card h3{font-family:var(--f-display);font-size:16px;text-transform:uppercase;letter-spacing:.06em;margin:0 0 8px;display:flex;align-items:center;gap:8px}
+.card h3 small{font-family:var(--f-mono);font-size:12px;color:var(--muted);letter-spacing:0;font-weight:400}
+.rem.done .t{text-decoration:line-through;color:var(--muted)}
+.chk{position:relative}
+.chk.on{background:var(--accent);border-color:var(--accent)}
+.chk.on::after{content:"";position:absolute;left:5px;top:1px;width:5px;height:10px;border:solid var(--accent-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.eqgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr));gap:12px}
+.eqcard{display:grid;gap:10px;align-content:start;min-width:0}
+.eqtop{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}
+.eqtop b{font-family:var(--f-display);font-size:20px;text-transform:uppercase;letter-spacing:.03em}
+.eqtop small{display:block;color:var(--muted)}
+.stats{display:flex;flex-wrap:wrap;gap:6px 22px;font-size:12.5px;color:var(--muted)}
+.stats b{display:block;color:var(--ink);font-family:var(--f-mono);font-size:14px;font-weight:500}
+.logrow{display:grid;grid-template-columns:76px minmax(0,1fr) auto;gap:8px;align-items:start;font-size:13px;padding:6px 0;border-top:1px solid var(--line)}
+.logrow .d{font-family:var(--f-mono);font-size:12px;color:var(--muted)}
+.logrow small{display:block;color:var(--muted)}
+.tag{display:inline-block;font-size:11px;padding:0 6px;border-radius:3px;background:var(--bg);border:1px solid var(--line);margin-right:6px}
+.tag.use{background:var(--lime);border-color:var(--lime);color:#0b1118}
+.note-row{display:grid;grid-template-columns:78px minmax(0,1fr);gap:10px;padding:10px 4px;border-top:1px solid var(--line);cursor:pointer;background:none;border-left:0;border-right:0;border-bottom:0;text-align:left;width:100%;font:inherit;color:inherit}
+.note-row:first-child{border-top:0}
+.note-row:hover{background:var(--bg)}
+.note-row .d{font-family:var(--f-mono);font-size:12px;color:var(--muted);padding-top:2px}
+.note-row b{display:block;font-weight:600}
+.note-row p{margin:2px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.note-row small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+.filters{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.filters input[type=search]{border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:7px 10px;font-size:14px;color:var(--ink);min-width:200px;flex:1;max-width:320px}
+.birdrow{display:grid;grid-template-columns:minmax(0,1.4fr) 90px auto;gap:8px;align-items:end}
+.birdrow .sp{display:grid;gap:6px;min-width:0}
+.hv-row{display:grid;grid-template-columns:96px minmax(0,1fr) auto;gap:10px;padding:10px 4px;border-top:1px solid var(--line);cursor:pointer;background:none;border-left:0;border-right:0;border-bottom:0;text-align:left;width:100%;font:inherit;color:inherit;align-items:start}
+.hv-row:first-child{border-top:0}
+.hv-row:hover{background:var(--bg)}
+.hv-row .d{font-family:var(--f-mono);font-size:12px;color:var(--muted);padding-top:2px}
+.hv-row .d b{display:block;color:var(--ink);font-weight:500}
+.hv-row small{display:block;color:var(--muted);font-size:12.5px;margin-top:2px}
+.hv-row .tot{font-family:var(--f-display);font-size:26px;line-height:1;font-weight:700}
+.hv-row .tot small{font-family:var(--f-body);font-size:11px;font-weight:400;text-align:right;margin-top:0}
+.statgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+.statgrid>div{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:10px 12px}
+.statgrid b{display:block;font-family:var(--f-display);font-size:30px;line-height:1;font-weight:700}
+.statgrid span{color:var(--muted);font-size:12px}
+.btn.mini{padding:2px 8px;font-size:12px}
+.rem{display:grid;grid-template-columns:22px minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 4px}
+.chk{width:20px;height:20px;border:2px solid var(--muted);border-radius:4px;background:none;cursor:pointer;padding:0}
+.chk:hover{border-color:var(--accent);background:var(--lime)}
+.rowbtn{background:none;border:0;text-align:left;cursor:pointer;padding:0;min-width:0}
+.rowbtn .t{overflow-wrap:anywhere;display:block}
+.rowbtn small{display:block;color:var(--muted);font-size:12px}
+.pill{font-family:var(--f-mono);font-size:11.5px;padding:2px 8px;border-radius:999px;background:var(--bg);border:1px solid var(--line);white-space:nowrap}
+.pill.soon{background:var(--lime);border-color:var(--lime);color:#0b1118}
+.pill.over{background:var(--danger);border-color:var(--danger);color:var(--accent-ink)}
+.hist{margin-top:6px;display:grid;gap:3px;font-size:13px;max-height:220px;overflow-y:auto}
+.hy{font-family:var(--f-mono);font-size:12px;color:var(--muted);margin-top:4px;border-bottom:1px solid var(--line)}
+.hr{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:8px;align-items:start}
+.hr i{width:10px;height:10px;border-radius:50%;margin-top:5px}
+.hr small{display:block;color:var(--muted)}
+.hr .n{font-family:var(--f-mono);font-size:11.5px;color:var(--muted)}
+.years{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.yr{font-family:var(--f-mono);font-size:14px;padding:6px 12px;border:1px solid var(--line);background:var(--surface);border-radius:4px;cursor:pointer}
+.yr[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.yr.add{border-style:dashed;color:var(--muted)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.main{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:14px;align-items:start}
+.stage{position:relative;height:min(80vh,780px);min-height:440px;background:#0e1511;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+#map{position:absolute;inset:0;background:#0e1511}
+#map.drawing{cursor:crosshair}
+#map.drawing .leaflet-interactive{cursor:crosshair}
+.ov{position:absolute;display:flex;gap:6px;flex-wrap:wrap;z-index:1000}
+.tools{top:10px;left:54px;right:56px}
+.hint{left:10px;right:10px;bottom:28px;align-items:center;background:var(--halo);color:#fff;border-radius:6px;padding:8px 10px;font-size:13px}
+.hint span{flex:1;min-width:140px}
+.btn{color:var(--ink);border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:6px 11px;cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap}
+.btn:hover{border-color:var(--accent)}
+.btn.primary,.btn[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.btn.danger{color:var(--danger)}
+.btn:disabled{opacity:.5;cursor:default}
+.panel{display:flex;flex-direction:column;gap:12px;max-height:min(80vh,780px);overflow-y:auto;padding-right:2px}
+#editorSlot:empty{display:none}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:12px}
+.card h2{font-family:var(--f-display);font-weight:600;font-size:18px;letter-spacing:.04em;text-transform:uppercase;margin:0 0 8px;display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.card h2 small{font-family:var(--f-mono);font-size:12px;color:var(--muted);letter-spacing:0;text-transform:none;font-weight:400}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;border:1px solid var(--line);border-radius:999px;background:var(--bg);cursor:pointer;font-size:12.5px}
+.chip i{width:10px;height:10px;border-radius:50%;background:var(--c);display:inline-block}
+.chip b{font-family:var(--f-mono);font-weight:500;font-size:12px;color:var(--muted)}
+.chip[aria-pressed="false"]{opacity:.45;text-decoration:line-through}
+.list{display:flex;flex-direction:column;gap:4px}
+.row{display:grid;grid-template-columns:10px minmax(0,1fr) auto;gap:8px;align-items:center;padding:7px 8px;border-radius:4px;border:1px solid transparent;cursor:pointer;background:none;text-align:left;width:100%}
+.row:hover{background:var(--bg)}
+.row[aria-current="true"]{border-color:var(--accent);background:var(--bg)}
+.row .sw{width:10px;height:10px;border-radius:50%;background:var(--c)}
+.row .t{min-width:0;overflow-wrap:anywhere}
+.row .t small{display:block;color:var(--muted);font-size:12px}
+.row .n{font-family:var(--f-mono);font-size:12px;color:var(--muted);text-align:right}
+.form{display:grid;gap:9px}
+.form label{display:grid;gap:3px;font-size:12px;color:var(--muted);font-weight:500;letter-spacing:.02em}
+.form input,.form select,.form textarea{border:1px solid var(--line);background:var(--bg);border-radius:4px;padding:7px 9px;font-size:14px;color:var(--ink);width:100%}
+.form textarea{min-height:60px;resize:vertical}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:2px}
+.note{color:var(--muted);font-size:12.5px;margin:0}
+.warn{background:var(--bg);border:1px dashed var(--accent);border-radius:6px;padding:10px;font-size:13px}
+.empty{color:var(--muted);font-size:13px;padding:6px 2px}
+.toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:6px;font-size:13px;z-index:5000}
+.lbl{background:transparent;border:0;box-shadow:none;color:#fff;font-weight:600;font-size:11.5px;letter-spacing:.03em;padding:0;text-shadow:0 0 3px #000,0 0 3px #000,0 0 5px #000;white-space:nowrap}
+.lbl::before{display:none}
+.lbl.u{font-family:var(--f-display);font-weight:700;font-size:19px;letter-spacing:.12em;text-transform:uppercase}
+.leaflet-container{font-family:var(--f-body)}
+@media (max-width:960px){
+  .main{grid-template-columns:minmax(0,1fr)}
+  .stage{height:62vh;min-height:380px}
+  .panel{max-height:none;overflow:visible}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div>
+      <h1>ORR Management Map</h1>
+      <div class="sub">Plantings, drawdowns, blinds, equipment and results, mapped by unit and kept year after year</div>
+    </div>
+    <nav class="years" id="years" aria-label="Year"></nav>
+  </header>
+  <nav class="tabs" id="tabs" aria-label="Sections"><button class="btn" data-tab="map" aria-pressed="true">Map</button><button class="btn" data-tab="todo" aria-pressed="false">To-Do</button><button class="btn" data-tab="equip" aria-pressed="false">Equipment</button><button class="btn" data-tab="notes" aria-pressed="false">Notes</button><button class="btn" data-tab="harvest" aria-pressed="false">Harvest</button></nav>
+  <div class="main" id="viewMap">
+    <div class="stage" id="stage">
+      <div id="map" aria-label="Property map"></div>
+      <div class="ov tools" id="tools"></div>
+      <div class="ov hint" id="hint" hidden></div>
+    </div>
+    <aside class="panel" id="panel"></aside>
+  </div>
+  <div class="page" id="viewTodo" hidden></div>
+  <div class="page" id="viewEquip" hidden></div>
+  <div class="page" id="viewNotes" hidden></div>
+  <div class="page" id="viewHarvest" hidden></div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+(function(){
+"use strict";
+const ACTS = {
+  disk:     {name:"Disk",     c:"#e8893a", ph:"Implement, depth, passes"},
+  mow:      {name:"Mow",      c:"#9ad24a", ph:"Equipment, height"},
+  burn:     {name:"Burn",     c:"#e5483a", ph:"Fuel, wind, crew"},
+  drawdown: {name:"Drawdown", c:"#4aa3ea", ph:"Target level, rate, board changes"},
+  plant:    {name:"Plant",    c:"#f2c744", ph:"Species, seeding rate, method"},
+  pump:     {name:"Pump",     c:"#2ec4b6", ph:"Pump, hours, gauge reading"},
+  spray:    {name:"Spray",    c:"#d96ad0", ph:"Product, rate, target species"},
+  blind:    {name:"Blind",    c:"#c08a5a", ph:"Blind type, location notes, who set it"}
+};
+const CATS={equipment:"Equipment upkeep",planting:"Planting",water:"Water",spray:"Spraying",other:"Other"};
+const ACT_CAT={plant:"planting",spray:"spray",pump:"water",drawdown:"water"};
+const KINDS = {poly:"Area", line:"Line", point:"Point"};
+const NOW = new Date();
+const S = {
+  mode:"local", cfg:null, units:[], marks:[], reminders:[], equipment:[], maint:[], tab:"map", harvest:[], hvAll:false, notes:[], noteTag:"", noteQ:"", noteAll:false, pe:null, confirm:null, showDone:false, eqAll:null, year:NOW.getFullYear(), extraYears:[],
+  tool:"select", draft:null, editor:null, sel:null, hidden:new Set(), lastAct:"disk", busy:false
+};
+const $ = id => document.getElementById(id);
+const esc = s => String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const todayStr = () => NOW.getFullYear()+"-"+String(NOW.getMonth()+1).padStart(2,"0")+"-"+String(NOW.getDate()).padStart(2,"0");
+function toast(msg){const t=$("toast");t.textContent=msg;t.hidden=false;clearTimeout(toast.h);toast.h=setTimeout(()=>t.hidden=true,3200)}
+
+/* ---------- storage adapters ---------- */
+const cfgFB = window.ORR_FIREBASE_CONFIG||{};
+const fbReady = cfgFB.apiKey && !/^PASTE/.test(cfgFB.apiKey) && window.firebase;
+const toDb = pts => pts.map(p=>({lat:p[0],lng:p[1]}));
+const fromDb = pts => (pts||[]).map(p=>[p.lat,p.lng]);
+
+const Local = {
+  key:"orr-map-v1", subs:{},
+  read(){try{return JSON.parse(localStorage.getItem(this.key)||"{}")}catch(e){return {}}},
+  write(o){try{localStorage.setItem(this.key,JSON.stringify(o))}catch(e){toast("Could not save in this browser")}},
+  fire(c){const d=this.read()[c]||{};(this.subs[c]||[]).forEach(f=>f(Object.keys(d).map(id=>Object.assign({id},d[id]))))},
+  async init(){window.addEventListener("storage",e=>{if(e.key===this.key)Object.keys(this.subs).forEach(c=>this.fire(c))})},
+  watch(c,cb){(this.subs[c]=this.subs[c]||[]).push(cb);setTimeout(()=>this.fire(c),0)},
+  async set(c,id,data){const o=this.read();(o[c]=o[c]||{})[id]=data;this.write(o);this.fire(c)},
+  async del(c,id){const o=this.read();if(o[c])delete o[c][id];this.write(o);this.fire(c)},
+  newId(){return "d"+Date.now().toString(36)+Math.random().toString(36).slice(2,6)}
+};
+const Cloud = {
+  db:null,
+  async init(){
+    firebase.initializeApp(cfgFB);
+    await firebase.auth().signInAnonymously();
+    this.db=firebase.firestore();
+  },
+  watch(c,cb){
+    this.db.collection(c).onSnapshot(s=>cb(s.docs.map(d=>Object.assign({id:d.id},d.data()))),
+      e=>{console.error(e);toast("Live updates stopped: "+(e.code||e.message))});
+  },
+  set(c,id,data){return this.db.collection(c).doc(id).set(data)},
+  del(c,id){return this.db.collection(c).doc(id).delete()},
+  newId(){return this.db.collection("marks").doc().id}
+};
+let store=Local;
+
+/* ---------- geometry ---------- */
+const M_LAT=111320;
+function proj(p,lat0){return [p[1]*M_LAT*Math.cos(lat0*Math.PI/180),p[0]*M_LAT]}
+function areaAc(pts){
+  if(pts.length<3) return 0;
+  const lat0=pts[0][0], q=pts.map(p=>proj(p,lat0)); let a=0;
+  for(let i=0;i<q.length;i++){const n=q[(i+1)%q.length];a+=q[i][0]*n[1]-n[0]*q[i][1]}
+  return Math.abs(a)/2/4046.8564224;
+}
+function lengthFt(pts){let m=0;for(let i=1;i<pts.length;i++)m+=L.latLng(pts[i-1]).distanceTo(L.latLng(pts[i]));return m*3.28084}
+function centroid(p){let a=0,b=0;p.forEach(q=>{a+=q[0];b+=q[1]});return [a/p.length,b/p.length]}
+function inPoly(pt,p){let c=false;for(let i=0,j=p.length-1;i<p.length;j=i++){
+  if(((p[i][1]>pt[1])!==(p[j][1]>pt[1]))&&(pt[0]<(p[j][0]-p[i][0])*(pt[1]-p[i][1])/(p[j][1]-p[i][1])+p[i][0]))c=!c}return c}
+function measure(m){
+  if(m.kind==="poly"){const ac=areaAc(m.points);return {txt:ac.toFixed(ac<10?2:1)+" ac",ac}}
+  if(m.kind==="line"){return {txt:Math.round(lengthFt(m.points)).toLocaleString()+" ft",ac:0}}
+  return {txt:"",ac:0};
+}
+function unitAt(points){const c=centroid(points);const u=S.units.find(u=>inPoly(c,u.points));return u?u.id:""}
+const unitName = id => {const u=S.units.find(u=>u.id===id);return u?u.name:""};
+
+/* ---------- map ---------- */
+const start=window.ORR_START||{lat:38,lng:-93.97,zoom:14};
+const map=L.map("map",{zoomControl:true,doubleClickZoom:false,maxZoom:21,zoomSnap:.5}).setView([start.lat,start.lng],start.zoom);
+const ESRI="Tiles &copy; Esri, Maxar, Earthstar Geographics";
+const sat=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",{maxNativeZoom:19,maxZoom:21,attribution:ESRI});
+const labels=L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",{maxNativeZoom:19,maxZoom:21,pane:"overlayPane"});
+const street=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxNativeZoom:19,maxZoom:21,attribution:"&copy; OpenStreetMap contributors"});
+sat.addTo(map);
+L.control.layers({"Satellite":sat,"Street":street},{"Place names":labels},{position:"topleft"}).addTo(map);
+L.control.scale({imperial:true,metric:false,position:"bottomleft"}).addTo(map);
+const lyr=L.layerGroup().addTo(map), dlyr=L.layerGroup().addTo(map);
+map.createPane("draft");map.getPane("draft").style.zIndex=650;
+
+function renderMap(){
+  lyr.clearLayers();
+  const dim=S.tool!=="select";
+  S.units.forEach(u=>{
+    const sel=S.sel&&S.sel.t==="unit"&&S.sel.id===u.id;
+    const pg=L.polygon(u.points,{color:"#fff",weight:sel?4:2,dashArray:"9 6",fill:false,interactive:true});
+    pg.on("click",e=>layerClick(e,"unit",u.id));
+    pg.addTo(lyr);
+    const lp=labelPoint(u.points);
+    L.marker(lp,{interactive:false,icon:L.divIcon({className:"",html:'<div class="lbl u" style="transform:translate(-50%,-50%)">'+esc(u.name)+'</div>',iconSize:[0,0]})}).addTo(lyr);
+  });
+  yearMarks().filter(m=>!S.hidden.has(m.activity)).forEach(m=>{
+    const a=ACTS[m.activity]||{c:"#fff",name:m.activity}, sel=S.sel&&S.sel.t==="mark"&&S.sel.id===m.id;
+    let ly;
+    if(m.kind==="poly"){
+      if(sel) L.polygon(m.points,{color:"#fff",weight:7,fill:false,interactive:false}).addTo(lyr);
+      ly=L.polygon(m.points,{color:a.c,weight:2.5,fillColor:a.c,fillOpacity:.38});
+    }else if(m.kind==="line"){
+      L.polyline(m.points,{color:sel?"#fff":"#000",opacity:sel?1:.55,weight:sel?9:7,interactive:false}).addTo(lyr);
+      ly=L.polyline(m.points,{color:a.c,weight:4,lineCap:"round"});
+    }else{
+      ly=L.circleMarker(m.points[0],{radius:8,color:"#fff",weight:sel?4:2,fillColor:a.c,fillOpacity:1});
+    }
+    ly.on("click",e=>layerClick(e,"mark",m.id)); ly.addTo(lyr);
+    const c=m.kind==="poly"?centroid(m.points):m.kind==="line"?m.points[Math.floor(m.points.length/2)]:m.points[0];
+    L.marker(c,{interactive:false,icon:L.divIcon({className:"",html:'<div class="lbl" style="transform:translate(-50%,'+(m.kind==="point"?"-26px":"-50%")+')">'+esc(a.name)+'</div>',iconSize:[0,0]})}).addTo(lyr);
+  });
+  renderDraft();
+}
+/* Best spot for a label: the point inside the shape farthest from its edges. */
+function labelPoint(pts){
+  const lat0=pts[0][0], k=Math.cos(lat0*Math.PI/180);
+  const q=pts.map(p=>[p[1]*k,p[0]]);
+  const xs=q.map(p=>p[0]), ys=q.map(p=>p[1]);
+  const x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+  const segD=(px,py,a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],l=dx*dx+dy*dy;let t=l?((px-a[0])*dx+(py-a[1])*dy)/l:0;t=Math.max(0,Math.min(1,t));return Math.hypot(px-a[0]-t*dx,py-a[1]-t*dy)};
+  let best=null,bd=-1;
+  const N=28;
+  for(let i=0;i<=N;i++)for(let j=0;j<=N;j++){
+    const px=x0+(x1-x0)*i/N, py=y0+(y1-y0)*j/N;
+    if(!inPoly([py,px/k],pts)) continue;
+    let d=1e9; for(let n=0;n<q.length;n++) d=Math.min(d,segD(px,py,q[n],q[(n+1)%q.length]));
+    if(d>bd){bd=d;best=[py,px/k]}
+  }
+  return best||centroid(pts);
+}
+let cursor=null;
+function renderDraft(){
+  dlyr.clearLayers(); const d=S.draft; if(!d) return;
+  const pts=d.points.slice(), live=cursor&&pts.length&&d.kind!=="point"?pts.concat([cursor]):pts;
+  const col=d.t==="mark"?ACTS[S.lastAct].c:"#fff";
+  if(d.kind==="poly"&&live.length>2) L.polygon(live,{pane:"draft",color:col,weight:0,fillColor:col,fillOpacity:.22,interactive:false}).addTo(dlyr);
+  if(live.length>1) L.polyline(live,{pane:"draft",color:"#fff",weight:2.5,dashArray:"6 4",interactive:false}).addTo(dlyr);
+  pts.forEach(p=>L.circleMarker(p,{pane:"draft",radius:5,color:"#0a140f",weight:1.5,fillColor:"#fff",fillOpacity:1,interactive:false}).addTo(dlyr));
+}
+function layerClick(e,t,id){
+  L.DomEvent.stop(e);
+  if(S.tool!=="select"){onMapClick([e.latlng.lat,e.latlng.lng]);return}
+  t==="mark"?selectMark(id):selectUnit(id);
+}
+map.on("click",e=>onMapClick([e.latlng.lat,e.latlng.lng]));
+map.on("mousemove",e=>{if(S.draft&&S.draft.points.length&&S.draft.kind!=="point"){cursor=[e.latlng.lat,e.latlng.lng];renderDraft()}});
+
+/* ---------- data helpers ---------- */
+const years=()=>{const s=new Set([S.year,...S.extraYears,...(S.cfg&&S.cfg.years||[]),...S.marks.map(m=>m.year)]);return [...s].sort((a,b)=>a-b)};
+const yearMarks=()=>S.marks.filter(m=>m.year===S.year);
+async function guard(fn){
+  if(S.busy) return; S.busy=true;
+  try{await fn()}catch(e){console.error(e);toast("Could not save: "+((e&&(e.code||e.message))||"unknown error"))}
+  finally{S.busy=false}
+}
+const saveCfg=patch=>store.set("config","map",Object.assign({},rawCfg(),patch));
+const rawCfg=()=>({years:(S.cfg&&S.cfg.years)||[],home:(S.cfg&&S.cfg.home)||null});
+
+/* ---------- chrome ---------- */
+function renderYears(){
+  $("years").innerHTML=years().map(y=>'<button class="yr" data-y="'+y+'" aria-pressed="'+(y===S.year)+'">'+y+'</button>').join("")+
+    '<button class="yr add" data-add="1" title="Start a new management year">+ Year</button>';
+}
+function renderTools(){
+  const b=(id,l)=>'<button class="btn" data-tool="'+id+'" aria-pressed="'+(S.tool===id)+'">'+l+'</button>';
+  $("tools").innerHTML=b("select","Select")+b("poly","Draw area")+b("line","Draw line")+b("point","Add point")+b("unit","Draw unit");
+}
+function renderHint(){
+  const h=$("hint"), d=S.draft, drawing=S.tool!=="select";
+  $("map").classList.toggle("drawing",drawing);
+  let msg="",btns="";
+  if(drawing){
+    const n=d?d.points.length:0;
+    if(S.tool==="point") msg="Click the map to place the point.";
+    else if(S.tool==="line") msg=n<2?"Click along the route. Add at least two points.":"Keep clicking to extend. Press Finish when done.";
+    else msg=n<3?"Click each corner of the area. Add at least three points.":"Click the first point, double-click, or press Finish to close the shape.";
+    btns=(S.tool!=="point"&&n?'<button class="btn" data-h="undo">Undo point</button>':"")+
+      (S.tool!=="point"&&n>=(S.tool==="line"?2:3)?'<button class="btn primary" data-h="finish">Finish</button>':"")+
+      '<button class="btn" data-h="cancel">Cancel</button>';
+  }
+  h.hidden=!msg; h.innerHTML=msg?'<span>'+esc(msg)+'</span>'+btns:"";
+}
+const sumByAct=()=>{const o={};Object.keys(ACTS).forEach(k=>o[k]={n:0,ac:0});yearMarks().forEach(m=>{const a=o[m.activity];if(a){a.n++;a.ac+=measure(m).ac}});return o};
+function renderPanel(){
+  let h="";
+  if(S.mode==="local") h+='<div class="warn"><b>Demo mode.</b> Entries save only in this browser. Add your Firebase settings at the top of this file to share live with everyone.</div>';
+  const sm=sumByAct(), ms=yearMarks();
+  h+='<section class="card"><h2>'+S.year+' season <small>'+ms.length+' '+(ms.length===1?"entry":"entries")+'</small></h2><div class="chips">'+
+    Object.keys(ACTS).map(k=>'<button class="chip" style="--c:'+ACTS[k].c+'" data-f="'+k+'" aria-pressed="'+!S.hidden.has(k)+'"><i></i>'+ACTS[k].name+' <b>'+(sm[k].ac?sm[k].ac.toFixed(1)+" ac":sm[k].n)+'</b></button>').join("")+'</div></section>';
+  h+='<div id="editorSlot"></div>'+remindersCard();
+  const sorted=ms.slice().sort((a,b)=>(a.date||"9")<(b.date||"9")?-1:(a.date||"9")>(b.date||"9")?1:0);
+  h+='<section class="card"><h2>Entries</h2>';
+  if(!sorted.length) h+='<p class="empty">Nothing recorded for '+S.year+' yet. Pick Draw area, Draw line or Add point on the map, then trace what was done.</p>';
+  else h+='<div class="list">'+sorted.map(m=>{
+    const a=ACTS[m.activity]||{name:m.activity,c:"#fff"}, me=measure(m), un=unitName(m.unit);
+    return '<button class="row" style="--c:'+a.c+'" data-row="'+esc(m.id)+'" aria-current="'+(!!S.sel&&S.sel.id===m.id)+'"><span class="sw"></span><span class="t">'+esc(a.name)+
+      '<small>'+esc([un,m.date,m.detail,m.result?("Result: "+m.result):""].filter(Boolean).join(" · ")||KINDS[m.kind])+'</small></span><span class="n">'+esc(me.txt)+'</span></button>';
+  }).join("")+'</div>';
+  h+='</section><section class="card"><h2>Units <small>'+S.units.length+'</small></h2>';
+  if(!S.units.length) h+='<p class="empty">Outline each pool with Draw unit and give it a name. Entries inside a unit are tagged with it automatically.</p>';
+  else h+='<div class="list">'+S.units.map(u=>'<button class="row" style="--c:#fff" data-urow="'+esc(u.id)+'" aria-current="'+(!!S.sel&&S.sel.id===u.id)+'"><span class="sw" style="border:1px dashed var(--muted);background:none"></span><span class="t">'+esc(u.name)+'</span><span class="n">'+areaAc(u.points).toFixed(1)+' ac</span></button>').join("")+'</div>';
+  h+='</section><section class="card"><h2>Map</h2><div class="actions">'+
+    '<button class="btn" data-h="home">Set home view</button><button class="btn" data-h="gohome">Go to home view</button>'+
+    '<button class="btn" data-h="export">Export backup</button><button class="btn" data-h="import">Import backup</button>'+
+    '<input type="file" id="impfile" accept="application/json" hidden></div></section>';
+  $("panel").innerHTML=h; renderEditor();
+}
+const actOptions=sel=>Object.keys(ACTS).map(k=>'<option value="'+k+'"'+(k===sel?" selected":"")+'>'+ACTS[k].name+'</option>').join("");
+function renderEditor(){
+  const slot=$("editorSlot"); if(!slot) return;
+  const e=S.editor; if(!e){slot.innerHTML="";return}
+  let h='<section class="card"><form class="form" id="ef">';
+  if(e.type==="mark"){
+    const d=e.data, me=measure({kind:e.kind,points:e.points});
+    h+='<h2>'+(e.id?"Edit entry":"New "+KINDS[e.kind].toLowerCase())+' <small>'+esc(me.txt)+'</small></h2>'+
+      '<div class="two"><label>Activity<select id="f_act">'+actOptions(d.activity)+'</select></label>'+
+      '<label>Date<input type="date" id="f_date" value="'+esc(d.date||"")+'"></label></div>'+
+      '<label>Unit<select id="f_unit"><option value="">None</option>'+S.units.map(u=>'<option value="'+esc(u.id)+'"'+(u.id===d.unit?" selected":"")+'>'+esc(u.name)+'</option>').join("")+'</select></label>'+
+      '<label>Details<input type="text" id="f_detail" value="'+esc(d.detail||"")+'" placeholder="'+esc(ACTS[d.activity].ph)+'"></label>'+
+      '<label>Result (what worked or did not)<input type="text" id="f_result" value="'+esc(d.result||"")+'" placeholder="e.g. Good millet stand, 80% coverage"></label>'+
+      (e.id?"":'<label>Remind me to follow up on<input type="date" id="f_remind" value="'+esc(d.remind||"")+'"></label>')+
+      '<label>Notes<textarea id="f_notes">'+esc(d.notes||"")+'</textarea></label>'+
+      '<div class="actions"><button class="btn primary" type="submit">'+(e.id?"Save changes":"Save entry")+'</button>'+
+      '<button class="btn" type="button" data-e="cancel">'+(e.id?"Close":"Discard")+'</button>'+(e.id?'<button class="btn danger" type="button" data-e="del">Delete</button>':"")+'</div>';
+  }else if(e.type==="reminder"){
+    const d=e.data;
+    h+='<h2>'+(e.id?"Edit reminder":"New reminder")+'</h2>'+
+      '<label>What needs doing<input type="text" id="f_rtitle" value="'+esc(d.title||"")+'" placeholder="e.g. Service the disk, check pump oil" autocomplete="off"></label>'+
+      '<div class="two"><label>Due date<input type="date" id="f_rdue" value="'+esc(d.due||"")+'"></label>'+
+      '<label>Type<select id="f_rcat">'+Object.keys(CATS).map(k=>'<option value="'+k+'"'+(k===d.cat?" selected":"")+'>'+CATS[k]+'</option>').join("")+'</select></label></div>'+
+      '<label>Unit<select id="f_runit"><option value="">None</option>'+S.units.map(u=>'<option value="'+esc(u.id)+'"'+(u.id===d.unit?" selected":"")+'>'+esc(u.name)+'</option>').join("")+'</select></label>'+
+      '<div class="actions"><button class="btn primary" type="submit">Save reminder</button><button class="btn" type="button" data-e="cancel">Cancel</button>'+
+      (e.id?'<button class="btn danger" type="button" data-e="del">Delete</button>':"")+'</div>';
+  }else{
+    h+='<h2>'+(e.id?"Edit unit":"New unit")+' <small>'+areaAc(e.points).toFixed(1)+' ac</small></h2>'+
+      '<label>Unit name<input type="text" id="f_name" value="'+esc(e.data.name||"")+'" placeholder="e.g. North Pool" autocomplete="off"></label>'+
+      '<div class="actions"><button class="btn primary" type="submit">Save unit</button><button class="btn" type="button" data-e="cancel">'+(e.id?"Close":"Discard")+'</button>'+
+      (e.id?'<button class="btn danger" type="button" data-e="del">Delete</button>':"")+'</div>'+
+      (e.id?'<p class="note">Deleting a unit keeps its entries. They just lose the unit tag.</p>':"")+(e.id?unitHistory(e.id):"");
+  }
+  slot.innerHTML=h+'</form></section>';
+}
+function renderAll(){renderYears();renderTools();renderHint();renderMap();renderPanel();renderPage()}
+
+/* ---------- reminders and history ---------- */
+const dayDiff=due=>!due?9999:Math.round((new Date(due+"T00:00:00")-new Date(todayStr()+"T00:00:00"))/864e5);
+function dueText(r){const d=dayDiff(r.due);return d<0?"Overdue "+(-d)+(d===-1?" day":" days"):d===0?"Due today":d===1?"Due tomorrow":d<=14?"Due in "+d+" days":r.due}
+function remindersCard(){
+  const open=S.reminders.filter(r=>!r.done).sort((a,b)=>(a.due||"9999")<(b.due||"9999")?-1:(a.due||"9999")>(b.due||"9999")?1:0);
+  const over=open.filter(r=>r.due&&dayDiff(r.due)<0).length;
+  let h='<section class="card"><h2>To-Do <small>'+(over?over+" overdue · ":"")+open.length+' open</small></h2>';
+  if(!open.length) h+='<p class="empty">Nothing on the list.</p>';
+  else h+='<div class="list">'+open.slice(0,4).map(r=>todoItem(r,false)).join("")+'</div>'+(open.length>4?'<p class="note">+ '+(open.length-4)+' more on the To-Do tab</p>':"");
+  return h+'<div class="actions"><button class="btn" data-h="addrem">Add task</button><button class="btn" data-h="todotab">Open To-Do</button></div></section>';
+}
+function unitHistory(id){
+  const ms=S.marks.filter(m=>m.unit===id).sort((a,b)=>b.year-a.year||((b.date||"")<(a.date||"")?-1:1));
+  if(!ms.length) return '<p class="note">No entries in this unit yet.</p>';
+  let h='<div class="hist"><b>History</b>',y=null;
+  ms.forEach(m=>{
+    if(m.year!==y){y=m.year;h+='<div class="hy">'+y+'</div>'}
+    const a=ACTS[m.activity]||{name:m.activity,c:"#999"};
+    h+='<div class="hr"><i style="background:'+a.c+'"></i><span>'+esc(a.name)+(m.detail?" - "+esc(m.detail):"")+(m.result?'<small>Result: '+esc(m.result)+'</small>':"")+'</span><span class="n">'+esc(m.date||"")+'</span></div>';
+  });
+  return h+'</div>';
+}
+function exportIcs(){
+  const open=S.reminders.filter(r=>!r.done&&r.due);
+  const ymd=x=>x.replace(/-/g,""), stamp=new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d+/,"");
+  const t=x=>String(x).replace(/([,;\\])/g,"\\$1").replace(/\n/g,"\\n");
+  const lines=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//ORR Management Map//EN"];
+  open.forEach(r=>lines.push("BEGIN:VEVENT","UID:"+r.id+"@orr-map","DTSTAMP:"+stamp,"DTSTART;VALUE=DATE:"+ymd(r.due),
+    "SUMMARY:"+t(r.title+(unitName(r.unit)?" ("+unitName(r.unit)+")":"")),"BEGIN:VALARM","ACTION:DISPLAY","DESCRIPTION:"+t(r.title),"TRIGGER:PT9H","END:VALARM","END:VEVENT"));
+  lines.push("END:VCALENDAR");
+  const url=URL.createObjectURL(new Blob([lines.join("\r\n")],{type:"text/calendar"}));
+  const an=document.createElement("a");an.href=url;an.download="orr-reminders.ics";document.body.appendChild(an);an.click();an.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
+}
+
+/* ---------- To-Do and Equipment pages ---------- */
+const EQTYPES=["Tractor","Disk / tillage","Mower","Sprayer","Pump","ATV / UTV","Boat / mud motor","Burn gear","Other"];
+const money=n=>(n||n===0)?"$"+Number(n).toLocaleString(undefined,{maximumFractionDigits:2}):"";
+const fmtDate=d=>{if(!d)return "";const p=d.split("-");return p[1]+"/"+p[2]+"/"+p[0]};
+const num=v=>{const n=parseFloat(v);return isFinite(n)?n:null};
+const opt=(v,l,sel)=>'<option value="'+esc(v)+'"'+(v===sel?" selected":"")+'>'+esc(l)+'</option>';
+const unitOpts=sel=>'<option value="">None</option>'+S.units.map(u=>opt(u.id,u.name,sel)).join("");
+const byDue=(a,b)=>(a.due||"9999")<(b.due||"9999")?-1:(a.due||"9999")>(b.due||"9999")?1:0;
+const todoRec=(r,o)=>Object.assign({title:r.title,due:r.due||"",cat:r.cat||"other",unit:r.unit||"",done:!!r.done,doneDate:r.doneDate||"",markId:r.markId||"",equipId:r.equipId||"",notes:r.notes||""},o||{});
+const softPage=()=>{if(!S.pe)renderPage()};
+function setTab(t){
+  S.tab=t;S.pe=null;
+  $("viewMap").hidden=t!=="map";$("viewTodo").hidden=t!=="todo";$("viewEquip").hidden=t!=="equip";$("viewNotes").hidden=t!=="notes";$("viewHarvest").hidden=t!=="harvest";
+  document.querySelectorAll("[data-tab]").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.tab===t)));
+  renderPage(); if(t==="map") setTimeout(()=>map.invalidateSize(),50);
+}
+$("tabs").addEventListener("click",e=>{const b=e.target.closest("[data-tab]");if(b)setTab(b.dataset.tab)});
+function toggleTodo(id){
+  const r=S.reminders.find(x=>x.id===id); if(!r) return; const done=!r.done;
+  guard(async()=>{await store.set("reminders",id,todoRec(r,{done,doneDate:done?todayStr():""}));toast(done?"Marked done":"Moved back to open")});
+}
+function openTodoForm(id){
+  const r=id&&S.reminders.find(x=>x.id===id);
+  S.pe={type:"todo",id:id||null,data:r?{title:r.title,due:r.due||"",cat:r.cat||"other",unit:r.unit||"",notes:r.notes||""}:{title:"",due:"",cat:"other",unit:"",notes:""}};
+  renderPage(); const f=document.querySelector("#pf [data-k=title]"); if(f) f.focus();
+}
+function todoItem(r,done){
+  const d=r.due?dayDiff(r.due):null, cls=done?"":(d!==null&&d<0)?"over":(d!==null&&d<=7)?"soon":"";
+  const pill=done?(r.doneDate?'<span class="pill">Done '+esc(fmtDate(r.doneDate))+'</span>':""):(r.due?'<span class="pill '+cls+'">'+esc(dueText(r))+'</span>':"");
+  const eq=r.equipId?((S.equipment.find(e=>e.id===r.equipId)||{}).name||""):"";
+  const sub=[CATS[r.cat]||"",unitName(r.unit),eq,r.notes].filter(Boolean).join(" · ");
+  return '<div class="rem'+(done?" done":"")+'"><button class="chk'+(done?" on":"")+'" data-rdone="'+esc(r.id)+'" aria-label="'+(done?"Mark not done":"Mark done")+'"></button><button class="rowbtn" data-redit="'+esc(r.id)+'"><span class="t">'+esc(r.title)+(sub?'<small>'+esc(sub)+'</small>':"")+'</span></button>'+pill+'</div>';
+}
+function todoForm(){
+  const e=S.pe,d=e.data;
+  return '<form class="card form" id="pf"><h2>'+(e.id?"Edit task":"New task")+'</h2>'+
+    '<label>Task<input type="text" data-k="title" value="'+esc(d.title)+'" placeholder="e.g. Order millet seed, set boards before drawdown" autocomplete="off"></label>'+
+    '<div class="two"><label>Due date (optional)<input type="date" data-k="due" value="'+esc(d.due)+'"></label>'+
+    '<label>Type<select data-k="cat">'+Object.keys(CATS).map(k=>opt(k,CATS[k],d.cat)).join("")+'</select></label></div>'+
+    '<label>Unit<select data-k="unit">'+unitOpts(d.unit)+'</select></label>'+
+    '<label>Notes<textarea data-k="notes">'+esc(d.notes)+'</textarea></label>'+
+    '<div class="actions"><button class="btn primary" type="submit">Save task</button><button class="btn" type="button" data-p="cancel">Cancel</button>'+(e.id?'<button class="btn danger" type="button" data-p="del">Delete</button>':"")+'</div></form>';
+}
+function renderTodo(){
+  const open=S.reminders.filter(r=>!r.done).sort(byDue), g={over:[],week:[],later:[],none:[]};
+  open.forEach(r=>{if(!r.due)g.none.push(r);else{const d=dayDiff(r.due);(d<0?g.over:d<=7?g.week:g.later).push(r)}});
+  const done=S.reminders.filter(r=>r.done).sort((a,b)=>(b.doneDate||"")<(a.doneDate||"")?-1:(b.doneDate||"")>(a.doneDate||"")?1:0);
+  let h='<div class="pagehead"><h2>To-Do <small>'+open.length+' open</small></h2><div class="actions"><button class="btn primary" data-h="addrem">+ Add task</button>'+(open.some(r=>r.due)?'<button class="btn" data-h="ics">Add to calendar</button>':"")+'</div></div>';
+  if(S.pe&&S.pe.type==="todo") h+=todoForm();
+  const grp=(t,list)=>list.length?'<section class="card"><h3>'+t+' <small>'+list.length+'</small></h3><div class="list">'+list.map(r=>todoItem(r,false)).join("")+'</div></section>':"";
+  h+=grp("Overdue",g.over)+grp("Due in the next 7 days",g.week)+grp("Later",g.later)+grp("No date",g.none);
+  if(!open.length) h+='<section class="card"><p class="empty">Nothing on the list. Add a task like ordering seed, servicing the disk, or setting boards before drawdown.</p></section>';
+  if(done.length) h+='<section class="card"><h3>Completed <small>'+done.length+'</small><button class="btn mini" data-p="showdone" style="margin-left:auto">'+(S.showDone?"Hide":"Show")+'</button></h3>'+(S.showDone?'<div class="list">'+done.slice(0,30).map(r=>todoItem(r,true)).join("")+'</div>':"")+'</section>';
+  $("viewTodo").innerHTML=h;
+}
+function equipForm(){
+  const e=S.pe,d=e.data;
+  return '<form class="card form" id="pf"><h2>'+(e.id?"Edit equipment":"New equipment")+'</h2>'+
+    '<div class="two"><label>Name<input type="text" data-k="name" value="'+esc(d.name)+'" placeholder="e.g. John Deere 5075E" autocomplete="off"></label>'+
+    '<label>Type<select data-k="type">'+EQTYPES.map(t=>opt(t,t,d.type)).join("")+'</select></label></div>'+
+    '<label>Total hours (optional)<input type="number" step="any" min="0" inputmode="decimal" data-k="hours" value="'+esc(d.hours)+'"></label>'+
+    '<label>Notes (serial number, oil type, filter part numbers)<textarea data-k="notes">'+esc(d.notes)+'</textarea></label>'+
+    '<div class="actions"><button class="btn primary" type="submit">Save equipment</button><button class="btn" type="button" data-p="cancel">Cancel</button>'+(e.id?'<button class="btn danger" type="button" data-p="del">Delete</button>':"")+'</div>'+
+    (e.id?'<p class="note">Deleting equipment also deletes its maintenance and use log.</p>':"")+'</form>';
+}
+function maintForm(){
+  const e=S.pe,d=e.data,eq=S.equipment.find(x=>x.id===e.equipId)||{name:""},use=e.kind==="use";
+  return '<form class="card form" id="pf"><h2>'+(use?"Log use":"Log maintenance")+' <small>'+esc(eq.name)+'</small></h2>'+
+    '<div class="two"><label>Date<input type="date" data-k="date" value="'+esc(d.date)+'"></label>'+
+    '<label>'+(use?"Hours used (added to total)":"Meter reading in hours (optional)")+'<input type="number" step="any" min="0" inputmode="decimal" data-k="hours" value="'+esc(d.hours)+'"></label></div>'+
+    '<label>'+(use?"What it was used for":"What was done")+'<input type="text" data-k="desc" value="'+esc(d.desc)+'" placeholder="'+(use?"e.g. Disked North Pool":"e.g. Changed oil and filter, greased fittings")+'" autocomplete="off"></label>'+
+    (use?"":'<div class="two"><label>Cost (optional)<input type="number" step="any" min="0" inputmode="decimal" data-k="cost" value="'+esc(d.cost)+'"></label><label>Next service due (optional)<input type="date" data-k="next" value="'+esc(d.next)+'"></label></div>')+
+    '<div class="actions"><button class="btn primary" type="submit">Save entry</button><button class="btn" type="button" data-p="cancel">Cancel</button></div>'+
+    (use?"":'<p class="note">A next service date adds a task to the To-Do list.</p>')+'</form>';
+}
+function eqCard(q){
+  const logs=S.maint.filter(m=>m.equipId===q.id).sort((a,b)=>(b.date||"")<(a.date||"")?-1:(b.date||"")>(a.date||"")?1:0);
+  const svc=logs.filter(m=>m.kind!=="use");
+  const spent=svc.filter(m=>(m.date||"").slice(0,4)===String(S.year)).reduce((a,m)=>a+(m.cost||0),0);
+  const nxt=S.reminders.filter(r=>!r.done&&r.equipId===q.id&&r.due).sort(byDue)[0];
+  const shown=S.eqAll===q.id?logs:logs.slice(0,4);
+  let h='<section class="card eqcard"><div class="eqtop"><div><b>'+esc(q.name)+'</b><small>'+esc(q.type||"")+'</small></div>'+
+    (nxt?'<span class="pill '+(dayDiff(nxt.due)<0?"over":dayDiff(nxt.due)<=7?"soon":"")+'">Service: '+esc(dueText(nxt))+'</span>':"")+'</div>'+
+    '<div class="stats"><span>Total hours<b>'+(q.hours!=null&&q.hours!==""?Number(q.hours).toLocaleString():"-")+'</b></span>'+
+    '<span>Last service<b>'+(svc[0]?esc(fmtDate(svc[0].date)):"-")+'</b></span>'+
+    '<span>Spent in '+S.year+'<b>'+(spent?esc(money(spent)):"-")+'</b></span></div>'+
+    (q.notes?'<p class="note">'+esc(q.notes)+'</p>':"")+
+    '<div class="actions"><button class="btn primary" data-p="log" data-id="'+esc(q.id)+'">Log maintenance</button><button class="btn" data-p="use" data-id="'+esc(q.id)+'">Log use</button><button class="btn" data-p="eqedit" data-id="'+esc(q.id)+'">Edit</button></div>';
+  if(shown.length){
+    h+='<div>'+shown.map(m=>{
+      const use=m.kind==="use", extra=[m.hours!=null?(use?m.hours+" hrs used":"Meter "+m.hours+" hrs"):"",m.cost?money(m.cost):""].filter(Boolean).join(" · ");
+      return '<div class="logrow"><span class="d">'+esc(fmtDate(m.date))+'</span><span><span class="tag'+(use?" use":"")+'">'+(use?"Use":"Service")+'</span>'+esc(m.desc||"")+(extra?'<small>'+esc(extra)+'</small>':"")+'</span>'+
+        '<button class="btn mini'+(S.confirm===m.id?" danger":"")+'" data-p="mdel" data-id="'+esc(m.id)+'">'+(S.confirm===m.id?"Confirm":"Delete")+'</button></div>';
+    }).join("")+'</div>';
+    if(logs.length>4) h+='<div class="actions"><button class="btn mini" data-p="eqall" data-id="'+esc(q.id)+'">'+(S.eqAll===q.id?"Show fewer":"Show all "+logs.length+" entries")+'</button></div>';
+  }else h+='<p class="empty">No entries yet.</p>';
+  return h+'</section>';
+}
+function renderEquip(){
+  let h='<div class="pagehead"><h2>Equipment <small>'+S.equipment.length+'</small></h2><div class="actions"><button class="btn primary" data-p="neweq">+ Add equipment</button></div></div>';
+  if(S.pe&&S.pe.type==="equip") h+=equipForm();
+  if(S.pe&&S.pe.type==="maint") h+=maintForm();
+  if(!S.equipment.length) h+='<section class="card"><p class="empty">No equipment yet. Add each tractor, disk, mower, sprayer and pump so you can log hours and service and get a reminder when the next service is due.</p></section>';
+  else h+='<div class="eqgrid">'+S.equipment.slice().sort((a,b)=>(a.name||"").localeCompare(b.name||"")).map(eqCard).join("")+'</div>';
+  $("viewEquip").innerHTML=h;
+}
+const NOTETAGS={wildlife:"Wildlife",weather:"Weather",water:"Water",damage:"Damage",visitor:"Visitors",idea:"Idea",other:"Other"};
+function noteForm(){
+  const e=S.pe,d=e.data;
+  return '<form class="card form" id="pf"><h2>'+(e.id?"Edit note":"New note")+'</h2>'+
+    '<div class="two"><label>Date<input type="date" data-k="date" value="'+esc(d.date)+'"></label>'+
+    '<label>Type<select data-k="tag">'+Object.keys(NOTETAGS).map(k=>opt(k,NOTETAGS[k],d.tag)).join("")+'</select></label></div>'+
+    '<label>Title (optional)<input type="text" data-k="title" value="'+esc(d.title)+'" placeholder="e.g. Teal on North Pool, storm damage to levee" autocomplete="off"></label>'+
+    '<label>Unit (optional)<select data-k="unit">'+unitOpts(d.unit)+'</select></label>'+
+    '<label>Note<textarea data-k="text" style="min-height:120px">'+esc(d.text)+'</textarea></label>'+
+    '<div class="actions"><button class="btn primary" type="submit">Save note</button><button class="btn" type="button" data-p="cancel">Cancel</button>'+(e.id?'<button class="btn danger" type="button" data-p="del">Delete</button>':"")+'</div></form>';
+}
+function renderNoteList(){
+  const q=S.noteQ.trim().toLowerCase();
+  const list=S.notes.filter(n=>(S.noteAll||(n.date||"").slice(0,4)===String(S.year))&&(!S.noteTag||n.tag===S.noteTag)&&(!q||[n.title,n.text,unitName(n.unit),NOTETAGS[n.tag]].join(" ").toLowerCase().includes(q)))
+    .sort((a,b)=>(b.date||"")<(a.date||"")?-1:(b.date||"")>(a.date||"")?1:0);
+  const el=$("noteList"); if(!el) return;
+  el.innerHTML=list.length?'<div>'+list.map(n=>'<button class="note-row" data-nedit="'+esc(n.id)+'"><span class="d">'+esc(fmtDate(n.date))+'</span><span>'+
+    (n.title?'<b>'+esc(n.title)+'</b>':"")+(n.text?'<p>'+esc(n.text)+'</p>':"")+
+    '<small>'+esc([NOTETAGS[n.tag]||"",unitName(n.unit)].filter(Boolean).join(" · "))+'</small></span></button>').join("")+'</div>'
+    :'<p class="empty">'+(S.notes.length?"No notes match these filters.":"No notes yet. Add anything that does not fit elsewhere: wildlife seen, weather events, damage, visitors, ideas for next year.")+'</p>';
+}
+function renderNotes(){
+  let h='<div class="pagehead"><h2>Notes <small>'+S.notes.length+'</small></h2><div class="actions"><button class="btn primary" data-p="newnote">+ Add note</button></div></div>';
+  if(S.pe&&S.pe.type==="note") h+=noteForm();
+  h+='<div class="filters"><input type="search" id="noteQ" placeholder="Search notes" value="'+esc(S.noteQ)+'" aria-label="Search notes">'+
+    '<button class="btn mini" data-p="noteall" aria-pressed="'+S.noteAll+'">'+(S.noteAll?"Showing all years":"Showing "+S.year)+'</button>'+
+    '<select id="noteTag" aria-label="Filter by type" style="border:1px solid var(--line);background:var(--surface);border-radius:4px;padding:6px 8px;font-size:13px;color:var(--ink)"><option value="">All types</option>'+Object.keys(NOTETAGS).map(k=>opt(k,NOTETAGS[k],S.noteTag)).join("")+'</select></div>'+
+    '<section class="card" id="noteList"></section>';
+  $("viewNotes").innerHTML=h; renderNoteList();
+}
+/* ---------- Harvest ---------- */
+const DEF_SPECIES=["Mallard","Teal","Pintail","Gadwall","Wigeon","Shoveler","Wood Duck","Canada Goose"];
+const WIND_DIRS=["Calm","N","NNE","NE","ENE","E","ESE","SE","SSE","S","SSW","SW","WSW","W","WNW","NW","NNW"];
+const nowTime=()=>String(NOW.getHours()).padStart(2,"0")+":"+String(NOW.getMinutes()).padStart(2,"0");
+const fmtTime=t=>{if(!t)return "";const [h,m]=t.split(":").map(Number);return ((h%12)||12)+":"+String(m).padStart(2,"0")+" "+(h<12?"AM":"PM")};
+function speciesList(){
+  const extra=new Set();
+  S.harvest.forEach(h=>(h.birds||[]).forEach(b=>{if(b.species&&!DEF_SPECIES.includes(b.species))extra.add(b.species)}));
+  return DEF_SPECIES.concat([...extra].sort());
+}
+function blindNames(){
+  const n=new Set();
+  S.marks.filter(m=>m.activity==="blind"&&m.detail).forEach(m=>n.add(m.detail.trim()));
+  S.harvest.forEach(h=>{if(h.blind)n.add(h.blind)});
+  return [...n].sort();
+}
+const hvWeather=h=>[h.temp!==""&&h.temp!=null?h.temp+"°F":"",(h.windDir&&h.windDir!=="")?(h.windDir==="Calm"?"Calm":h.windDir+(h.windSpeed!==""&&h.windSpeed!=null?" "+h.windSpeed+" mph":"")):(h.windSpeed!==""&&h.windSpeed!=null?h.windSpeed+" mph wind":"")].filter(Boolean).join(" · ");
+function birdRow(b,i){
+  const list=speciesList(), sel=b.custom?"__new__":b.species;
+  return '<div class="birdrow"><div class="sp"><label>Species<select data-bi="'+i+'" data-bk="sel"><option value="">Choose species</option>'+list.map(x=>opt(x,x,sel)).join("")+'<option value="__new__"'+(sel==="__new__"?" selected":"")+'>Type a new species...</option></select></label>'+
+    (b.custom?'<input type="text" data-bi="'+i+'" data-bk="species" value="'+esc(b.species)+'" placeholder="New species name" autocomplete="off" aria-label="New species name">':"")+'</div>'+
+    '<label>Qty<input type="number" min="0" step="1" inputmode="numeric" data-bi="'+i+'" data-bk="qty" value="'+esc(b.qty)+'"></label>'+
+    '<button type="button" class="btn mini" data-p="rmbird" data-id="'+i+'">Remove</button></div>';
+}
+function huntForm(){
+  const e=S.pe,d=e.data;
+  return '<form class="card form" id="pf"><h2>'+(e.id?"Edit hunt":"Log a hunt")+'</h2>'+
+    '<div class="two"><label>Date<input type="date" data-k="date" value="'+esc(d.date)+'"></label><label>Time<input type="time" data-k="time" value="'+esc(d.time)+'"></label></div>'+
+    '<div class="two"><label>Temperature (°F)<input type="number" step="1" inputmode="numeric" data-k="temp" value="'+esc(d.temp)+'"></label>'+
+    '<label>Hunters<input type="number" min="0" step="1" inputmode="numeric" data-k="hunters" value="'+esc(d.hunters)+'"></label></div>'+
+    '<div class="two"><label>Wind direction<select data-k="windDir"><option value="">Not recorded</option>'+WIND_DIRS.map(x=>opt(x,x,d.windDir)).join("")+'</select></label>'+
+    '<label>Wind speed (mph)<input type="number" min="0" step="1" inputmode="numeric" data-k="windSpeed" value="'+esc(d.windSpeed)+'"></label></div>'+
+    '<label>Blind<input type="text" list="blindlist" data-k="blind" value="'+esc(d.blind)+'" placeholder="Pick a blind or type a name" autocomplete="off"></label>'+
+    '<datalist id="blindlist">'+blindNames().map(n=>'<option value="'+esc(n)+'"></option>').join("")+'</datalist>'+
+    '<div class="form" style="gap:8px"><b style="font-size:13px">Birds harvested</b>'+d.birds.map(birdRow).join("")+
+    '<div class="actions"><button type="button" class="btn" data-p="addbird">+ Add species</button></div>'+
+    '<p class="note">Leave the list empty to record a hunt with no birds.</p></div>'+
+    '<label>Notes<textarea data-k="notes">'+esc(d.notes)+'</textarea></label>'+
+    '<div class="actions"><button class="btn primary" type="submit">Save hunt</button><button class="btn" type="button" data-p="cancel">Cancel</button>'+(e.id?'<button class="btn danger" type="button" data-p="del">Delete</button>':"")+'</div></form>';
+}
+function renderHarvest(){
+  const list=S.harvest.filter(h=>S.hvAll||(h.date||"").slice(0,4)===String(S.year)).sort((a,b)=>((b.date||"")+(b.time||""))<((a.date||"")+(a.time||""))?-1:1);
+  const tot=h=>(h.birds||[]).reduce((a,b)=>a+(Number(b.qty)||0),0);
+  const birds=list.reduce((a,h)=>a+tot(h),0), hunters=list.reduce((a,h)=>a+(Number(h.hunters)||0),0);
+  const sp={}, bl={};
+  list.forEach(h=>{(h.birds||[]).forEach(b=>{sp[b.species]=(sp[b.species]||0)+(Number(b.qty)||0)});const k=h.blind||"No blind recorded";bl[k]=bl[k]||{n:0,b:0};bl[k].n++;bl[k].b+=tot(h)});
+  let h='<div class="pagehead"><h2>Harvest <small>'+list.length+(list.length===1?" hunt":" hunts")+'</small></h2><div class="actions"><button class="btn primary" data-p="newhunt">+ Log hunt</button></div></div>';
+  if(S.pe&&S.pe.type==="hunt") h+=huntForm();
+  h+='<div class="filters"><button class="btn mini" data-p="hvall">'+(S.hvAll?"Showing all years":"Showing "+S.year)+'</button></div>';
+  if(list.length){
+    h+='<div class="statgrid"><div><b>'+list.length+'</b><span>Hunts</span></div><div><b>'+birds+'</b><span>Birds</span></div><div><b>'+(hunters?(birds/hunters).toFixed(1):"-")+'</b><span>Birds per hunter</span></div><div><b>'+(list.length?(birds/list.length).toFixed(1):"-")+'</b><span>Birds per hunt</span></div></div>';
+    const sk=Object.keys(sp).sort((a,b)=>sp[b]-sp[a]);
+    if(sk.length) h+='<section class="card"><h3>By species</h3><div class="chips">'+sk.map(k=>'<span class="chip" style="cursor:default"><i style="background:var(--lime)"></i>'+esc(k)+' <b>'+sp[k]+'</b></span>').join("")+'</div></section>';
+    const bk=Object.keys(bl).sort((a,b)=>bl[b].b-bl[a].b);
+    if(bk.length>1||(bk[0]&&bk[0]!=="No blind recorded")) h+='<section class="card"><h3>By blind</h3><div class="list">'+bk.map(k=>'<div class="logrow" style="grid-template-columns:minmax(0,1fr) auto auto;border-top:0"><span>'+esc(k)+'</span><span class="d">'+bl[k].n+(bl[k].n===1?" hunt":" hunts")+'</span><b class="mono">'+bl[k].b+(bl[k].b===1?' bird':' birds')+'</b></div>').join("")+'</div></section>';
+  }
+  h+='<section class="card">'+(list.length?'<div>'+list.map(x=>{
+    const w=hvWeather(x), br=(x.birds||[]).filter(b=>b.species).map(b=>esc(b.species)+" "+(Number(b.qty)||0)).join(", ");
+    return '<button class="hv-row" data-hedit="'+esc(x.id)+'"><span class="d"><b>'+esc(fmtDate(x.date))+'</b>'+esc(fmtTime(x.time))+'</span><span>'+
+      '<b>'+esc(x.blind||"No blind recorded")+'</b>'+(br?'<small>'+br+'</small>':'<small>No birds</small>')+
+      '<small>'+esc([x.hunters!==""&&x.hunters!=null?x.hunters+(Number(x.hunters)===1?" hunter":" hunters"):"",w].filter(Boolean).join(" · "))+'</small>'+(x.notes?'<small>'+esc(x.notes)+'</small>':"")+'</span>'+
+      '<span class="tot">'+tot(x)+'<small>birds</small></span></button>'}).join("")+'</div>'
+    :'<p class="empty">'+(S.harvest.length?"No hunts in "+S.year+". Switch to all years to see earlier seasons.":"No hunts logged yet. Tap Log a hunt to record the date, conditions, blind, hunters and birds taken.")+'</p>')+'</section>';
+  $("viewHarvest").innerHTML=h;
+}
+function renderPage(){if(S.tab==="todo")renderTodo();else if(S.tab==="equip")renderEquip();else if(S.tab==="notes")renderNotes();else if(S.tab==="harvest")renderHarvest()}
+function pageClick(e){
+  const rd=e.target.closest("[data-rdone]"); if(rd){toggleTodo(rd.dataset.rdone);return}
+  const re=e.target.closest("[data-redit]"); if(re){openTodoForm(re.dataset.redit);return}
+  const ne=e.target.closest("[data-nedit]"); if(ne){const n=S.notes.find(x=>x.id===ne.dataset.nedit);if(n){S.pe={type:"note",id:n.id,data:{date:n.date||"",tag:n.tag||"other",title:n.title||"",unit:n.unit||"",text:n.text||""}};renderPage();window.scrollTo({top:0,behavior:"smooth"})}return}
+  const he=e.target.closest("[data-hedit]"); if(he){const x=S.harvest.find(v=>v.id===he.dataset.hedit);if(x){S.pe={type:"hunt",id:x.id,data:{date:x.date||"",time:x.time||"",temp:x.temp==null?"":x.temp,windDir:x.windDir||"",windSpeed:x.windSpeed==null?"":x.windSpeed,blind:x.blind||"",hunters:x.hunters==null?"":x.hunters,notes:x.notes||"",birds:(x.birds||[]).map(b=>({species:b.species,qty:b.qty,custom:false}))}};renderPage();window.scrollTo({top:0,behavior:"smooth"})}return}
+  const h=e.target.closest("[data-h]"); if(h){mapAction(h.dataset.h);return}
+  const b=e.target.closest("[data-p]"); if(!b) return;
+  const a=b.dataset.p, id=b.dataset.id, focusFirst=()=>{const f=document.querySelector("#pf input");if(f)f.focus()};
+  if(a==="cancel"){S.pe=null;renderPage()}
+  else if(a==="newhunt"){S.pe={type:"hunt",id:null,data:{date:todayStr(),time:nowTime(),temp:"",windDir:"",windSpeed:"",blind:"",hunters:"",notes:"",birds:[{species:"",qty:"",custom:false}]}};renderPage()}
+  else if(a==="hvall"){S.hvAll=!S.hvAll;renderPage()}
+  else if(a==="addbird"&&S.pe&&S.pe.type==="hunt"){S.pe.data.birds.push({species:"",qty:"",custom:false});renderPage()}
+  else if(a==="rmbird"&&S.pe&&S.pe.type==="hunt"){S.pe.data.birds.splice(+id,1);renderPage()}
+  else if(a==="newnote"){S.pe={type:"note",id:null,data:{date:todayStr(),tag:"other",title:"",unit:"",text:""}};renderPage();const f=document.querySelector('#pf [data-k=text]');if(f)f.focus()}
+  else if(a==="noteall"){S.noteAll=!S.noteAll;renderPage()}
+  else if(a==="showdone"){S.showDone=!S.showDone;renderPage()}
+  else if(a==="neweq"){S.pe={type:"equip",id:null,data:{name:"",type:"Tractor",hours:"",notes:""}};renderPage();focusFirst()}
+  else if(a==="eqedit"){const q=S.equipment.find(x=>x.id===id);if(q){S.pe={type:"equip",id,data:{name:q.name||"",type:q.type||"Other",hours:q.hours==null?"":q.hours,notes:q.notes||""}};renderPage();focusFirst()}}
+  else if(a==="log"||a==="use"){S.pe={type:"maint",equipId:id,kind:a==="use"?"use":"service",data:{date:todayStr(),hours:"",desc:"",cost:"",next:""}};renderPage();const f=document.querySelector('#pf [data-k=desc]');if(f)f.focus()}
+  else if(a==="eqall"){S.eqAll=S.eqAll===id?null:id;renderPage()}
+  else if(a==="mdel"){
+    if(S.confirm===id) guard(async()=>{await store.del("maintenance",id);S.confirm=null;toast("Entry deleted")});
+    else{S.confirm=id;renderPage()}
+  }
+  else if(a==="del"){
+    const pe=S.pe; if(!pe||!pe.id) return;
+    guard(async()=>{
+      if(pe.type==="todo") await store.del("reminders",pe.id);
+      else if(pe.type==="note") await store.del("notes",pe.id);
+      else if(pe.type==="hunt") await store.del("harvest",pe.id);
+      else if(pe.type==="equip"){for(const m of S.maint.filter(m=>m.equipId===pe.id)) await store.del("maintenance",m.id); await store.del("equipment",pe.id)}
+      S.pe=null;renderPage();toast("Deleted");
+    });
+  }
+}
+function pageSubmit(e){
+  e.preventDefault(); const pe=S.pe; if(!pe) return; const d=pe.data;
+  guard(async()=>{
+    if(pe.type==="todo"){
+      const t=(d.title||"").trim(); if(!t){toast("Say what needs doing");return}
+      const old=(pe.id&&S.reminders.find(x=>x.id===pe.id))||{};
+      await store.set("reminders",pe.id||store.newId(),todoRec(Object.assign({},old,d,{title:t})));
+      S.pe=null;renderPage();toast("Task saved");
+    }else if(pe.type==="hunt"){
+      if(!d.date){toast("Pick the hunt date");return}
+      const birds=d.birds.map(b=>({species:(b.species||"").trim(),qty:Math.max(0,parseInt(b.qty,10)||0)})).filter(b=>b.species&&b.qty>0);
+      if(d.birds.some(b=>b.custom&&!(b.species||"").trim()&&parseInt(b.qty,10)>0)){toast("Type the new species name");return}
+      await store.set("harvest",pe.id||store.newId(),{date:d.date,time:d.time||"",temp:num(d.temp),windDir:d.windDir||"",windSpeed:num(d.windSpeed),blind:(d.blind||"").trim(),hunters:num(d.hunters),birds,total:birds.reduce((a,b)=>a+b.qty,0),notes:d.notes||""});
+      S.pe=null;renderPage();toast("Hunt saved");
+    }else if(pe.type==="note"){
+      if(!(d.text||"").trim()&&!(d.title||"").trim()){toast("Write something in the note");return}
+      await store.set("notes",pe.id||store.newId(),{date:d.date||todayStr(),tag:d.tag||"other",title:(d.title||"").trim(),unit:d.unit||"",text:d.text||""});
+      S.pe=null;renderPage();toast("Note saved");
+    }else if(pe.type==="equip"){
+      const n=(d.name||"").trim(); if(!n){toast("Give the equipment a name");return}
+      await store.set("equipment",pe.id||store.newId(),{name:n,type:d.type||"Other",hours:num(d.hours),notes:d.notes||""});
+      S.pe=null;renderPage();toast("Equipment saved");
+    }else if(pe.type==="maint"){
+      const q=S.equipment.find(x=>x.id===pe.equipId); if(!q) return;
+      if(!(d.desc||"").trim()&&!d.hours){toast("Add what was done or the hours");return}
+      const use=pe.kind==="use", hrs=num(d.hours);
+      await store.set("maintenance",store.newId(),{equipId:q.id,kind:pe.kind,date:d.date||todayStr(),hours:hrs,desc:(d.desc||"").trim(),cost:use?null:num(d.cost)});
+      if(hrs!=null){
+        const total=use?(Number(q.hours)||0)+hrs:Math.max(Number(q.hours)||0,hrs);
+        await store.set("equipment",q.id,{name:q.name,type:q.type||"Other",hours:total,notes:q.notes||""});
+      }
+      if(!use&&d.next) await store.set("reminders",store.newId(),todoRec({title:"Service "+q.name+((d.desc||"").trim()?": "+d.desc.trim():""),due:d.next,cat:"equipment",equipId:q.id}));
+      S.pe=null;renderPage();toast("Entry saved");
+    }
+  });
+}
+["viewTodo","viewEquip","viewNotes","viewHarvest"].forEach(id=>{
+  const el=$(id);
+  el.addEventListener("click",pageClick);
+  el.addEventListener("submit",pageSubmit);
+  el.addEventListener("input",ev=>{
+    if(ev.target.id==="noteQ"){S.noteQ=ev.target.value;renderNoteList();return}
+    if(ev.target.id==="noteTag"){S.noteTag=ev.target.value;renderNoteList();return}
+    const bi=ev.target.dataset&&ev.target.dataset.bi;
+    if(bi!==undefined&&S.pe&&S.pe.type==="hunt"){
+      const row=S.pe.data.birds[+bi], bk=ev.target.dataset.bk, v=ev.target.value; if(!row) return;
+      if(bk==="sel"){ if(v==="__new__"){row.custom=true;row.species="";renderPage();const f=document.querySelector('#pf [data-bi="'+bi+'"][data-bk=species]');if(f)f.focus()} else{row.custom=false;row.species=v} }
+      else if(bk==="species") row.species=v;
+      else if(bk==="qty") row.qty=v;
+      return;
+    }
+    const k=ev.target.dataset&&ev.target.dataset.k;if(S.pe&&k)S.pe.data[k]=ev.target.value});
+});
+
+/* ---------- drawing ---------- */
+function setTool(t){
+  S.tool=t;S.draft=null;cursor=null;
+  if(t!=="select"){S.sel=null;S.editor=null;S.draft={t:t==="unit"?"unit":"mark",kind:t==="unit"?"poly":t,points:[]}}
+  renderTools();renderHint();renderMap();renderPanel();
+}
+function endDraw(){S.tool="select";S.draft=null;cursor=null;renderTools();renderHint();renderMap()}
+function finishDraft(){
+  const d=S.draft; if(!d) return;
+  if(d.t==="unit"){
+    if(d.points.length<3) return;
+    S.editor={type:"unit",points:d.points.slice(),data:{name:""}};
+  }else{
+    const need=d.kind==="line"?2:d.kind==="poly"?3:1; if(d.points.length<need) return;
+    const pts=d.points.slice();
+    S.editor={type:"mark",kind:d.kind,points:pts,data:{activity:S.lastAct,date:S.year===NOW.getFullYear()?todayStr():"",unit:unitAt(pts),detail:"",result:"",remind:"",notes:""}};
+  }
+  endDraw();renderPanel();
+  const f=$("f_name")||$("f_act"); if(f) f.focus();
+}
+function selectMark(id){
+  const m=S.marks.find(x=>x.id===id);
+  if(!m){S.sel=null;S.editor=null}else{S.sel={t:"mark",id};S.editor={type:"mark",id,kind:m.kind,points:m.points,data:{activity:m.activity,date:m.date||"",unit:m.unit||"",detail:m.detail||"",result:m.result||"",notes:m.notes||""}}}
+  renderMap();renderPanel();
+}
+function selectUnit(id){
+  const u=S.units.find(x=>x.id===id);
+  if(!u){S.sel=null;S.editor=null}else{S.sel={t:"unit",id};S.editor={type:"unit",id,points:u.points,data:{name:u.name}}}
+  renderMap();renderPanel();
+}
+function onMapClick(pt){
+  const d=S.draft;
+  if(S.tool==="select"||!d){ if(S.sel||S.editor){S.sel=null;S.editor=null;renderMap();renderPanel()} return }
+  const now=Date.now(), last=d.last||{t:0,p:null};
+  const px=p=>map.latLngToContainerPoint(p), near=(a,b,tol)=>a&&b&&px(a).distanceTo(px(b))<tol;
+  if(d.kind==="poly"&&d.points.length>=3&&near(pt,d.points[0],14)){finishDraft();return}
+  if(d.kind!=="point"&&d.points.length>=(d.kind==="poly"?3:2)&&now-last.t<350&&near(pt,last.p,8)){finishDraft();return}
+  d.points.push(pt); d.last={t:now,p:pt};
+  if(d.kind==="point"){finishDraft();return}
+  renderDraft();renderHint();
+}
+document.addEventListener("keydown",e=>{
+  const tag=(e.target.tagName||"").toLowerCase(); if(tag==="input"||tag==="textarea"||tag==="select") return;
+  if(e.key==="Escape"){ if(S.tool!=="select"){endDraw();renderPanel()} else if(S.sel||S.editor){S.sel=null;S.editor=null;renderMap();renderPanel()} }
+  else if(e.key==="Enter"&&S.draft) finishDraft();
+  else if((e.key==="Backspace"||e.key==="z")&&S.draft&&S.draft.points.length){S.draft.points.pop();renderDraft();renderHint()}
+});
+
+/* ---------- UI events ---------- */
+$("tools").addEventListener("click",e=>{const b=e.target.closest("[data-tool]");if(b)setTool(b.dataset.tool===S.tool?"select":b.dataset.tool)});
+$("hint").addEventListener("click",e=>{
+  const b=e.target.closest("[data-h]"); if(!b) return; const a=b.dataset.h;
+  if(a==="finish") finishDraft();
+  else if(a==="undo"&&S.draft&&S.draft.points.length){S.draft.points.pop();renderDraft();renderHint()}
+  else if(a==="cancel"){S.editor=null;endDraw();renderPanel()}
+});
+L.DomEvent.disableClickPropagation($("tools"));L.DomEvent.disableClickPropagation($("hint"));
+$("years").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  if(b.dataset.add){
+    const ys=years(), ny=Math.max(...ys)+1;
+    S.year=ny;S.extraYears.push(ny);S.sel=null;S.editor=null;
+    guard(()=>saveCfg({years:[...new Set([...(S.cfg&&S.cfg.years||[]),...ys,ny])].sort()}));
+    renderAll();
+  }else if(b.dataset.y){S.year=+b.dataset.y;S.sel=null;S.editor=null;if(S.tool!=="select")endDraw();renderAll()}
+});
+const quietTool=()=>{if(S.tool!=="select"){S.draft=null;S.tool="select";cursor=null;renderTools();renderHint()}};
+$("panel").addEventListener("click",e=>{
+  const f=e.target.closest("[data-f]"); if(f){const k=f.dataset.f;S.hidden.has(k)?S.hidden.delete(k):S.hidden.add(k);renderMap();renderPanel();return}
+  const r=e.target.closest("[data-row]"); if(r){quietTool();selectMark(r.dataset.row);const m=S.marks.find(x=>x.id===r.dataset.row);if(m)map.fitBounds(L.latLngBounds(m.points),{maxZoom:18,padding:[60,60]});return}
+  const u=e.target.closest("[data-urow]"); if(u){quietTool();selectUnit(u.dataset.urow);const un=S.units.find(x=>x.id===u.dataset.urow);if(un)map.fitBounds(L.latLngBounds(un.points),{maxZoom:18,padding:[60,60]});return}
+  const rd=e.target.closest("[data-rdone]"); if(rd){toggleTodo(rd.dataset.rdone);return}
+  const re=e.target.closest("[data-redit]"); if(re){setTab("todo");openTodoForm(re.dataset.redit);return}
+  const h=e.target.closest("[data-h]"); if(h){mapAction(h.dataset.h);return}
+  const x=e.target.closest("[data-e]"); if(!x) return;
+  if(x.dataset.e==="cancel"){S.editor=null;S.sel=null;renderMap();renderPanel()} else if(x.dataset.e==="del") doDelete();
+});
+function mapAction(a){
+  if(a==="home"){const c=map.getCenter();guard(async()=>{await saveCfg({home:{lat:c.lat,lng:c.lng,zoom:map.getZoom()}});toast("Home view saved")})}
+  else if(a==="gohome"){const hm=S.cfg&&S.cfg.home;if(hm)map.setView([hm.lat,hm.lng],hm.zoom);else toast("No home view saved yet")}
+  else if(a==="export"){
+    const out={exported:new Date().toISOString(),config:S.cfg,units:S.units.map(u=>({id:u.id,name:u.name,points:toDb(u.points)})),marks:S.marks.map(m=>Object.assign({},m,{points:toDb(m.points)})),reminders:S.reminders,equipment:S.equipment,maintenance:S.maint,notes:S.notes,harvest:S.harvest};
+    const url=URL.createObjectURL(new Blob([JSON.stringify(out,null,2)],{type:"application/json"}));
+    const an=document.createElement("a");an.href=url;an.download="orr-map-backup-"+todayStr()+".json";document.body.appendChild(an);an.click();an.remove();setTimeout(()=>URL.revokeObjectURL(url),2000);
+  }else if(a==="import") $("impfile").click();
+  else if(a==="ics") exportIcs();
+  else if(a==="addrem"){setTab("todo");openTodoForm()}
+  else if(a==="todotab") setTab("todo");
+}
+$("panel").addEventListener("change",e=>{
+  if(e.target.id!=="impfile"||!e.target.files[0]) return;
+  const rd=new FileReader();
+  rd.onload=()=>guard(async()=>{
+    const o=JSON.parse(rd.result); let n=0;
+    if(o.config) await store.set("config","map",{years:o.config.years||[],home:o.config.home||null});
+    for(const u of o.units||[]){await store.set("units",u.id,{name:u.name,points:u.points});n++}
+    for(const m of o.marks||[]){const id=m.id;const c=Object.assign({},m);delete c.id;await store.set("marks",id,c);n++}
+    for(const [coll,list] of [["reminders",o.reminders],["equipment",o.equipment],["maintenance",o.maintenance],["notes",o.notes],["harvest",o.harvest]]) for(const x of list||[]){const c=Object.assign({},x);delete c.id;await store.set(coll,x.id,c);n++}
+    toast("Imported "+n+" items");
+  });
+  rd.readAsText(e.target.files[0]); e.target.value="";
+});
+$("panel").addEventListener("input",e=>{
+  const ed=S.editor; if(!ed) return; const id=e.target.id;
+  if(ed.type==="mark"){
+    if(id==="f_act"){ed.data.activity=e.target.value;S.lastAct=e.target.value;$("f_detail").placeholder=ACTS[e.target.value].ph}
+    else if(id==="f_date")ed.data.date=e.target.value;
+    else if(id==="f_unit")ed.data.unit=e.target.value;
+    else if(id==="f_detail")ed.data.detail=e.target.value;
+    else if(id==="f_notes")ed.data.notes=e.target.value;
+    else if(id==="f_result")ed.data.result=e.target.value;
+    else if(id==="f_remind")ed.data.remind=e.target.value;
+  }else if(ed.type==="reminder"){
+    if(id==="f_rtitle")ed.data.title=e.target.value;
+    else if(id==="f_rdue")ed.data.due=e.target.value;
+    else if(id==="f_rcat")ed.data.cat=e.target.value;
+    else if(id==="f_runit")ed.data.unit=e.target.value;
+  }else if(id==="f_name") ed.data.name=e.target.value;
+});
+$("panel").addEventListener("submit",e=>{
+  e.preventDefault(); const ed=S.editor; if(!ed) return;
+  guard(async()=>{
+    if(ed.type==="mark"){
+      const id=ed.id||store.newId(), old=ed.id&&S.marks.find(m=>m.id===ed.id);
+      await store.set("marks",id,{year:old?old.year:S.year,kind:ed.kind,points:toDb(ed.points),activity:ed.data.activity,date:ed.data.date||"",unit:ed.data.unit||"",detail:ed.data.detail||"",result:ed.data.result||"",notes:ed.data.notes||""});
+      if(!ed.id&&ed.data.remind){
+        await store.set("reminders",store.newId(),{title:ACTS[ed.data.activity].name+" follow-up"+(ed.data.detail?": "+ed.data.detail:""),due:ed.data.remind,cat:ACT_CAT[ed.data.activity]||"other",unit:ed.data.unit||"",done:false,markId:id});
+      }
+      S.editor=null;S.sel=null;renderMap();renderPanel();toast("Entry saved");
+    }else if(ed.type==="reminder"){
+      const ttl=(ed.data.title||"").trim(); if(!ttl){toast("Say what needs doing");return}
+      if(!ed.data.due){toast("Pick a due date");return}
+      await store.set("reminders",ed.id||store.newId(),{title:ttl,due:ed.data.due,cat:ed.data.cat||"other",unit:ed.data.unit||"",done:!!ed.data.done,markId:ed.data.markId||""});
+      S.editor=null;S.sel=null;renderPanel();toast("Reminder saved");
+    }else{
+      const name=(ed.data.name||"").trim(); if(!name){toast("Give the unit a name");return}
+      await store.set("units",ed.id||store.newId(),{name,points:toDb(ed.points)});
+      S.editor=null;S.sel=null;renderMap();renderPanel();toast("Unit saved");
+    }
+  });
+});
+function doDelete(){
+  const ed=S.editor; if(!ed||!ed.id) return;
+  guard(async()=>{await store.del(ed.type==="unit"?"units":ed.type==="reminder"?"reminders":"marks",ed.id);S.editor=null;S.sel=null;renderMap();renderPanel();toast("Deleted")});
+}
+
+/* ---------- boot ---------- */
+async function boot(){
+  renderAll();
+  if(fbReady){
+    try{await Cloud.init();store=Cloud;S.mode="cloud"}
+    catch(e){console.error(e);toast("Could not connect to Firebase ("+(e.code||e.message)+"). Using demo mode.")}
+  }
+  if(store===Local) await Local.init();
+  let first=true;
+  store.watch("config",docs=>{
+    const d=docs.find(x=>x.id==="map"); S.cfg=d||null;
+    if(first&&d&&d.home){map.setView([d.home.lat,d.home.lng],d.home.zoom)} first=false;
+    renderYears();
+  });
+  store.watch("units",docs=>{S.units=docs.map(d=>({id:d.id,name:d.name,points:fromDb(d.points)}));renderMap();renderPanel()});
+  store.watch("reminders",docs=>{S.reminders=docs;renderPanel();softPage()});
+  store.watch("equipment",docs=>{S.equipment=docs;softPage()});
+  store.watch("maintenance",docs=>{S.maint=docs;softPage()});
+  store.watch("notes",docs=>{S.notes=docs;softPage()});
+  store.watch("harvest",docs=>{S.harvest=docs;softPage()});
+  store.watch("marks",docs=>{
+    S.marks=docs.map(d=>Object.assign({},d,{points:fromDb(d.points)}));
+    if(S.sel&&S.sel.t==="mark"&&!S.marks.find(m=>m.id===S.sel.id)){S.sel=null;S.editor=null}
+    renderYears();renderMap();renderPanel();
+  });
+  renderPanel();
+}
+boot();
+setTimeout(()=>map.invalidateSize(),300);
+window.addEventListener("resize",()=>map.invalidateSize());
+})();
+</script>
+</body>
+</html>
